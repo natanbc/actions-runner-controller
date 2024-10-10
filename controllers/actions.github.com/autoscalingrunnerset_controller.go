@@ -167,6 +167,18 @@ func (r *AutoscalingRunnerSetReconciler) Reconcile(ctx context.Context, req ctrl
 		return ctrl.Result{}, nil
 	}
 
+	if autoscalingRunnerSet.Status.State == "" {
+		if err := patchSubResource(ctx, r.Status(), autoscalingRunnerSet, func(obj *v1alpha1.AutoscalingRunnerSet) {
+			if obj.Status.State == "" {
+				log.Info("Update state to creating")
+				obj.Status.State = "Creating"
+			}
+		}); err != nil {
+			log.Error(err, "Failed to update autoscaling runner set state")
+			return ctrl.Result{}, err
+		}
+	}
+
 	if !controllerutil.ContainsFinalizer(autoscalingRunnerSet, autoscalingRunnerSetFinalizerName) {
 		log.Info("Adding finalizer")
 		if err := patch(ctx, r.Client, autoscalingRunnerSet, func(obj *v1alpha1.AutoscalingRunnerSet) {
@@ -249,6 +261,13 @@ func (r *AutoscalingRunnerSetReconciler) Reconcile(ctx context.Context, req ctrl
 	listenerSpecHashChanged := listener.Annotations[annotationKeyRunnerSpecHash] != autoscalingRunnerSet.ListenerSpecHash()
 	if listenerFound && (listenerValuesHashChanged || listenerSpecHashChanged) {
 		log.Info("AutoscalingListener is out of date. Deleting it so that it is recreated", "name", listener.Name)
+		if err := patchSubResource(ctx, r.Status(), autoscalingRunnerSet, func(obj *v1alpha1.AutoscalingRunnerSet) {
+			log.Info("Updating state to ListenerRecreating")
+			obj.Status.State = "ListenerRecreating"
+		}); err != nil {
+			log.Error(err, "Failed to update autoscaling runner set state")
+			return ctrl.Result{}, err
+		}
 		if err := r.Delete(ctx, listener); err != nil {
 			if kerrors.IsNotFound(err) {
 				return ctrl.Result{}, nil
@@ -311,6 +330,38 @@ func (r *AutoscalingRunnerSetReconciler) Reconcile(ctx context.Context, req ctrl
 			log.Error(err, "Failed to update autoscaling runner set status with current runner count")
 			return ctrl.Result{}, err
 		}
+	}
+
+	listenerPod := new(corev1.Pod)
+	if err := r.Get(ctx, client.ObjectKey{Namespace: listener.Namespace, Name: listener.Name}, listenerPod); err != nil {
+		if !kerrors.IsNotFound(err) {
+			log.Error(err, "Unable to get listener pod", "namespace", listener.Namespace, "name", listener.Name)
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
+	var state string
+	cs := listenerContainerStatus(listenerPod)
+	switch {
+	case autoscalingRunnerSet.Status.State == "Deleting":
+		//Do nothing
+	case cs == nil:
+		state = "ListenerPodCreating"
+	case cs.State.Terminated != nil:
+		state = "ListenerPodTerminated"
+	case cs.State.Running != nil && listener.ObjectMeta.DeletionTimestamp.IsZero():
+		state = "Ready"
+	}
+
+	if err := patchSubResource(ctx, r.Status(), autoscalingRunnerSet, func(obj *v1alpha1.AutoscalingRunnerSet) {
+		if state != "" {
+			log.Info("Updating state", "newState", state)
+			obj.Status.State = state
+		}
+	}); err != nil {
+		log.Error(err, "Failed to update autoscaling runner set state")
+		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{}, nil
@@ -757,6 +808,24 @@ func (r *AutoscalingRunnerSetReconciler) SetupWithManager(mgr ctrl.Manager) erro
 						NamespacedName: types.NamespacedName{
 							Namespace: autoscalingListener.Spec.AutoscalingRunnerSetNamespace,
 							Name:      autoscalingListener.Spec.AutoscalingRunnerSetName,
+						},
+					},
+				}
+			},
+		)).
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(
+			func(_ context.Context, o client.Object) []reconcile.Request {
+				pod := o.(*corev1.Pod)
+				ns := pod.Labels["actions.github.com/scale-set-namespace"]
+				name := pod.Labels["actions.github.com/scale-set-name"]
+				if ns == "" || name == "" {
+					return []reconcile.Request{}
+				}
+				return []reconcile.Request{
+					{
+						NamespacedName: types.NamespacedName{
+							Namespace: ns,
+							Name:      name,
 						},
 					},
 				}
