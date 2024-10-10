@@ -19,7 +19,6 @@ package actionsgithubcom
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/go-logr/logr"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
@@ -91,7 +90,7 @@ func (r *AutoscalingListenerReconciler) Reconcile(ctx context.Context, req ctrl.
 		}
 		if !done {
 			log.Info("Waiting for resources to be deleted before removing finalizer")
-			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+			return ctrl.Result{Requeue: true}, nil
 		}
 
 		log.Info("Removing finalizer")
@@ -117,7 +116,7 @@ func (r *AutoscalingListenerReconciler) Reconcile(ctx context.Context, req ctrl.
 		}
 
 		log.Info("Successfully added finalizer")
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{}, nil
 	}
 
 	// Check if the AutoscalingRunnerSet exists
@@ -307,7 +306,7 @@ func (r *AutoscalingListenerReconciler) cleanupResources(ctx context.Context, au
 				return false, fmt.Errorf("failed to delete listener config secret: %v", err)
 			}
 		}
-		//return false, nil
+		return false, nil
 	case err != nil && !kerrors.IsNotFound(err):
 		return false, fmt.Errorf("failed to get listener config secret: %v", err)
 	}
@@ -324,7 +323,7 @@ func (r *AutoscalingListenerReconciler) cleanupResources(ctx context.Context, au
 					return false, fmt.Errorf("failed to delete listener proxy secret: %v", err)
 				}
 			}
-			//return false, nil
+			return false, nil
 		case err != nil && !kerrors.IsNotFound(err):
 			return false, fmt.Errorf("failed to get listener proxy secret: %v", err)
 		}
@@ -341,7 +340,7 @@ func (r *AutoscalingListenerReconciler) cleanupResources(ctx context.Context, au
 				return false, fmt.Errorf("failed to delete listener role binding: %v", err)
 			}
 		}
-		//return false, nil
+		return false, nil
 	case err != nil && !kerrors.IsNotFound(err):
 		return false, fmt.Errorf("failed to get listener role binding: %v", err)
 	}
@@ -357,7 +356,7 @@ func (r *AutoscalingListenerReconciler) cleanupResources(ctx context.Context, au
 				return false, fmt.Errorf("failed to delete listener role: %v", err)
 			}
 		}
-		//return false, nil
+		return false, nil
 	case err != nil && !kerrors.IsNotFound(err):
 		return false, fmt.Errorf("failed to get listener role: %v", err)
 	}
@@ -485,7 +484,7 @@ func (r *AutoscalingListenerReconciler) createListenerPod(ctx context.Context, a
 			return ctrl.Result{}, err
 		}
 
-		return ctrl.Result{}, nil
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	newPod, err := r.ResourceBuilder.newScaleSetListenerPod(autoscalingListener, &podConfig, serviceAccount, secret, metricsConfig, envs...)
@@ -561,7 +560,7 @@ func (r *AutoscalingListenerReconciler) createSecretsForListener(ctx context.Con
 	}
 
 	logger.Info("Created listener secret", "namespace", newListenerSecret.Namespace, "name", newListenerSecret.Name)
-	return ctrl.Result{}, nil
+	return ctrl.Result{Requeue: true}, nil
 }
 
 func (r *AutoscalingListenerReconciler) createProxySecret(ctx context.Context, autoscalingListener *v1alpha1.AutoscalingListener, logger logr.Logger) (ctrl.Result, error) {
@@ -600,7 +599,7 @@ func (r *AutoscalingListenerReconciler) createProxySecret(ctx context.Context, a
 
 	logger.Info("Created listener proxy secret", "namespace", newProxySecret.Namespace, "name", newProxySecret.Name)
 
-	return ctrl.Result{}, nil
+	return ctrl.Result{Requeue: true}, nil
 }
 
 func (r *AutoscalingListenerReconciler) updateSecretsForListener(ctx context.Context, secret *corev1.Secret, mirrorSecret *corev1.Secret, logger logr.Logger) (ctrl.Result, error) {
@@ -616,7 +615,7 @@ func (r *AutoscalingListenerReconciler) updateSecretsForListener(ctx context.Con
 	}
 
 	logger.Info("Updated listener mirror secret", "namespace", updatedMirrorSecret.Namespace, "name", updatedMirrorSecret.Name, "hash", dataHash)
-	return ctrl.Result{}, nil
+	return ctrl.Result{Requeue: true}, nil
 }
 
 func (r *AutoscalingListenerReconciler) createRoleForListener(ctx context.Context, autoscalingListener *v1alpha1.AutoscalingListener, logger logr.Logger) (ctrl.Result, error) {
@@ -629,7 +628,7 @@ func (r *AutoscalingListenerReconciler) createRoleForListener(ctx context.Contex
 	}
 
 	logger.Info("Created listener role", "namespace", newRole.Namespace, "name", newRole.Name, "rules", newRole.Rules)
-	return ctrl.Result{}, nil
+	return ctrl.Result{Requeue: true}, nil
 }
 
 func (r *AutoscalingListenerReconciler) updateRoleForListener(ctx context.Context, listenerRole *rbacv1.Role, desiredRules []rbacv1.PolicyRule, desiredRulesHash string, logger logr.Logger) (ctrl.Result, error) {
@@ -644,7 +643,7 @@ func (r *AutoscalingListenerReconciler) updateRoleForListener(ctx context.Contex
 	}
 
 	logger.Info("Updated listener role in namespace to have the right permission", "namespace", updatedPatchRole.Namespace, "name", updatedPatchRole.Name, "rules", updatedPatchRole.Rules)
-	return ctrl.Result{}, nil
+	return ctrl.Result{Requeue: true}, nil
 }
 
 func (r *AutoscalingListenerReconciler) createRoleBindingForListener(ctx context.Context, autoscalingListener *v1alpha1.AutoscalingListener, listenerRole *rbacv1.Role, serviceAccount *corev1.ServiceAccount, logger logr.Logger) (ctrl.Result, error) {
@@ -672,7 +671,7 @@ func (r *AutoscalingListenerReconciler) createRoleBindingForListener(ctx context
 		"role", listenerRole.Name,
 		"serviceAccountNamespace", serviceAccount.Namespace,
 		"serviceAccount", serviceAccount.Name)
-	return ctrl.Result{}, nil
+	return ctrl.Result{Requeue: true}, nil
 }
 
 func (r *AutoscalingListenerReconciler) publishRunningListener(autoscalingListener *v1alpha1.AutoscalingListener, isUp bool) error {
@@ -727,7 +726,6 @@ func (r *AutoscalingListenerReconciler) SetupWithManager(mgr ctrl.Manager) error
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.AutoscalingListener{}).
 		Owns(&corev1.Pod{}).
-		Owns(&corev1.Secret{}).
 		Owns(&corev1.ServiceAccount{}).
 		Watches(&rbacv1.Role{}, handler.EnqueueRequestsFromMapFunc(labelBasedWatchFunc)).
 		Watches(&rbacv1.RoleBinding{}, handler.EnqueueRequestsFromMapFunc(labelBasedWatchFunc)).
